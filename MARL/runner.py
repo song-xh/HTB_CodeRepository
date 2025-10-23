@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import sys
 import json
 from datetime import datetime
+import csv
 
 
 class Runner:
@@ -108,6 +109,17 @@ class Runner:
         with open(file_path, 'w') as f:
             json.dump(self.results, f, indent=4)
 
+    def export_schedule_csv(self, episodes_situation, filename="schedule.csv"):
+        """episodes_situation: List[(time, job_id, site_id, plane_id, proc_min, move_min)]"""
+        os.makedirs(self.save_path, exist_ok=True)
+        fpath = os.path.join(self.save_path, filename)
+        with open(fpath, "w", newline="",   encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["time_min", "job_code",     "job_id", "site_id",
+                "plane_id", "proc_min", "move_min"])
+            for t, jid, sid, pid, pmin, mmin in sorted(episodes_situation, key=lambda x: x[0]):
+                code = self.env.jobs_obj.id2code()[jid]
+                w.writerow([f"{t:.2f}", code, jid, sid, pid,f"{pmin:.2f}", f"{mmin:.2f}"])
 
     def evaluate(self):
         win_number = 0
@@ -138,6 +150,9 @@ class Runner:
             file_path = os.path.join(self.save_path, file_name)
             with open(file_path, 'w') as f:
                 json.dump(self.results, f, indent=4)
-
+        if getattr(self.args, "export_csv", True) and len(self.results["schedule_results"]) > 0:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.export_schedule_csv(
+            self.results["schedule_results"][-1], filename=f"schedule_{stamp}.csv")
         return win_rate, reward, time , move_time
 

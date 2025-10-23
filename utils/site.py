@@ -3,79 +3,67 @@
 A-R 20个战位
 每个站位拥有:站位id,绝对位置,可以进行的作业对象列表,可以进行作业id列表
 """
+# utils/site.py
 import numpy as np
-from utils.job import Jobs
-import copy
-import random
+from typing import List, Dict, Tuple
 
 
-# 所有战位的类
-class Sites:
-
-    def __init__(self, planes_num):
-
-        # 所有战位对象
-        self.sites_object_list = []
-        sites_codes = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', "14", '15', '16',
-                       '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28','29', '30', '31']
-        # 站位位置
-        self.sites_positions = [
-            [45,110], [35,110], [25,100], [25, 90], [35, 80], [45, 80],
-            [95,120], [85,120], [75,110], [85,100], [95,100], [105,90], [95, 80], [85, 80], 
-            [45, 60], [35, 60], [25, 50], [35, 40], [45, 40], [55, 30], [45, 20], [35, 20], 
-            [95, 50], [85, 50], [75, 40], [75, 30], [85, 20], [95, 20],
-            [130,80], [130,70], [130,60]
-            ]
-        
-        # 前18个站位资源数量随机生成
-        jobs_num = 10
-        sites_resources_range = [[i for i in range(jobs_num-1)] for _ in range(len(sites_codes)-3)]  # [0,1,...,8]*18
-        resource_number = [[0]*(jobs_num) for _ in range(len(sites_codes)-3)]   # [0*10]*18
-        for a in range(len(resource_number)):
-            while sum(resource_number[a]) == 0:
-                for i in range(jobs_num-1):
-                    resource_sum = 0
-                    while resource_sum < planes_num:
-                        for j in range(len(resource_number)):
-                            resource_number[j][i] = random.randint(0, 2)
-                            resource_sum += resource_number[j][i]
-        for i in range(len(resource_number)):
-            for j in range(jobs_num-1):
-                if resource_number[i][j] == 0:
-                    sites_resources_range[i].remove(j)
-        # 最后几个出场站位只能执行出场作业且资源无限
-        sites_resources_range.extend([[jobs_num-1]]*3)
-        resource_number.extend([[0,0,0,0,0,0,0,0,0,100]]*3)
-        
-        
-        for i in range(len(sites_codes)):
-            temp_object = Site(i, self.sites_positions[i], sites_resources_range[i], resource_number[i])
-            self.sites_object_list.append(temp_object)
-
-        
-    
-    def update_site_resources(self, action_id, job_id):
-        # 更新该站位的资源列表
-        assert self.sites_object_list[action_id].resource_number[job_id] >= 1
-        self.sites_object_list[action_id].resource_number[job_id] -= 1
-        if self.sites_object_list[action_id].resource_number[job_id] == 0:
-            temp = copy.deepcopy(self.sites_object_list[action_id].resource_ids_list)
-            temp.remove(job_id)
-            self.sites_object_list[action_id].update_resorces(temp)
-
-
-# 每一个战位的类
 class Site:
-    def __init__(self, site_id, relative_position, resource_ids_list, resource_number):
-        self.site_id = site_id
-        self.absolute_position = np.array(relative_position)
-        self.resource_jobs = Jobs()
-        self.resource_jobs.reserved_jobs(resource_ids_list)
-        self.resource_ids_list = resource_ids_list  # 代表这个site可以进行job的id列表
-        self.resource_number = resource_number  # 该站位可执行作业资源数量
+    """站位/跑道。若 is_runway=True 表示跑道（29/30/31）。"""
 
-    # 由于资源抢占关系而更新战位的资源列表
-    def update_resorces(self, new_resource_ids_list):
-        self.resource_ids_list = new_resource_ids_list
+    def __init__(self, site_id: int, absolute_position: np.ndarray,
+                 resource_ids_list: List[int], resource_number: List[int],
+                 is_runway: bool = False):
+        self.site_id = site_id
+        self.absolute_position = absolute_position.astype(float)
+        self.resource_ids_list = list(resource_ids_list)  # job.id 列表：该站位能执行的作业
+        self.resource_number = list(resource_number)      # 对应作业的并发产能
+        self.is_runway = is_runway
+        # [(start,end),...]
+        self.unavailable_windows: List[Tuple[float, float]] = []
+
+    def is_available(self, now_min: float) -> bool:
+        for s, e in self.unavailable_windows:
+            if s <= now_min < e:
+                return False
+        return True
+
+
+class Sites:
+    """默认构造 28 个停机位 + 3 条跑道。位置与能力可按技术资料地图替换。"""
+
+    def __init__(self, jobs):
+        self.sites_object_list: List[Site] = []
+        self._build_default(jobs)
+
+    def _build_default(self, jobs):
+        J = jobs.jobs_object_list
+        code2id = {j.code: j.index_id for j in J}
+        # 简化布局：28 个停位坐标均匀散布；最后三位为跑道
+        positions = []
+        for i in range(28):
+            positions.append(
+                np.array([10 + (i % 7)*10, 70 - (i//7)*10], dtype=float))
+        runways = [
+            np.array([120.0, 10.0], dtype=float),  # 29
+            np.array([140.0, 10.0], dtype=float),  # 30
+            np.array([160.0, 10.0], dtype=float),  # 31
+        ]
+        # 能力：每个停位可执行大部分“保障/进场/转移”作业；产能默认 1（可按站位类型细化）
+        # 这里用 job.id 作为“能力标识”，与 environment 的掩码/匹配逻辑一致
+        capability_ids = [code2id[c]
+                          for c in code2id.keys() if c not in ("ZY_S", "ZY_F", "ZY_Z")]
+        for i in range(28):
+            res_ids = capability_ids
+            res_num = [1]*len(res_ids)
+            self.sites_object_list.append(Site(site_id=i+1, absolute_position=positions[i],
+                                               resource_ids_list=res_ids, resource_number=res_num, is_runway=False))
+        # FIXME:跑道仅负责 ZY_S/ZY_F/ZY_Z 作业
+        for rid, pos in enumerate(runways, start=29):
+            res_ids = [code2id["ZY_S"], code2id["ZY_F"], code2id["ZY_Z"]]
+            res_num = [1, 1, 1]
+            self.sites_object_list.append(Site(site_id=rid, absolute_position=pos,
+                                               resource_ids_list=res_ids, resource_number=res_num, is_runway=True))
+
 
 

@@ -2,16 +2,38 @@
 这个文件用于描述task的内容
 
 """
-from utils.job import Jobs
+from typing import List, Set, Dict
+from utils.job import Jobs, Job
+
+
+class TaskGraph:
+    def __init__(self, jobs: Jobs):
+        self.jobs = jobs
+        self.pre: Dict[str, Set[str]] = {j.code: set(
+            j.predecessors) for j in jobs.jobs_object_list}
+        self.mutex: Dict[str, Set[str]] = {
+            j.code: set(j.mutex) for j in jobs.jobs_object_list}
+
+    def enabled(self, finished: Set[str], ongoing_mutex: Set[str]) -> List[Job]:
+        cand = []
+        for j in self.jobs.jobs_object_list:
+            if j.code in finished:
+                continue
+            if not self.pre[j.code].issubset(finished):
+                continue
+            if self.mutex[j.code] & ongoing_mutex:
+                continue
+            cand.append(j)
+        return cand
+
+    def all_finished(self, finished: Set[str]) -> bool:
+        return "ZY_F" in finished
+
 
 class Task:
     def __init__(self):
-        # 当前仅考虑最简单的任务，串行任务
-        self.simple_task = [5, 4, 2, 3, 8, 6, 7, 1, 0, 9]  # 作业顺序
-        jobs = Jobs()
-        # 带有对象的
-        self.simple_task_object = []
-        for eve in self.simple_task:
-            self.simple_task_object.append(jobs.jobs_object_list[eve])  # 顺序约束的作业列表
+        self.jobs = Jobs()
+        self.graph = TaskGraph(self.jobs)
+
 
 

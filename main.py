@@ -11,6 +11,7 @@ from MARL.common.arguments import get_common_args, get_coma_args, get_mixer_args
     get_reinforce_args, \
     get_commnet_args, get_g2anet_args
 from utils.PDRs.shortestDistence import SDrules
+from utils.knowledgeGraph_test import KGPrior
 import json
 from datetime import datetime
 
@@ -20,11 +21,27 @@ np.random.seed(2)
 
 # 强化学习决策函数，带入来自DRL的强化学习agent
 def marl_agent_wrapper():
-
-
     args = get_common_args()
 
-    if args.alg.find('coma') > -1:  # 判断模型的参数
+    # 兜底（可留可删，因为现在 arguments.py 已声明）
+    args.use_prior = getattr(args, "use_prior", True)
+    args.prior_dim_site = getattr(args, "prior_dim_site", 8)
+    args.prior_dim_plane = getattr(args, "prior_dim_plane", 3)
+    args.obs_pad = getattr(args, "obs_pad", 32)
+    args.replay_dir = getattr(args, "replay_dir", "")
+
+    # 先构造带 args 的环境
+    env = ScheduleEnv(args)
+
+    # 如开启先验，挂到环境（注意缩进到 if 中）
+    if args.use_prior:
+        # 你导入的是 utils.knowledgeGraph_test.KGPrior，就用它；
+        # 如果你用了我给的 utils.kg_prior.KGPrior，确保 import 对应即可。
+        prior = KGPrior(ds=args.prior_dim_site, dp=args.prior_dim_plane)
+        env.attach_prior(prior, args.prior_dim_site, args.prior_dim_plane)
+
+    # 根据算法补齐 mixer/critic 参数（不会覆盖 CLI 值）
+    if args.alg.find('coma') > -1:
         args = get_coma_args(args)
     elif args.alg.find('central_v') > -1:
         args = get_centralv_args(args)
@@ -37,27 +54,26 @@ def marl_agent_wrapper():
     if args.alg.find('g2anet') > -1:
         args = get_g2anet_args(args)
 
-    # 加载调度环境
-    env = ScheduleEnv()
-
+    # 初始化/训练
     env.reset(args.n_agents)
     env_info = env.get_env_info()
     args.n_actions = env_info["n_actions"]
     args.state_shape = env_info["state_shape"]
     args.obs_shape = env_info["obs_shape"]
     args.episode_limit = env_info["episode_limit"]
-    print("是否加载模型（测试必须）：", args.load_model, "是否训练：",args.learn)
+
+    print("是否加载模型（测试必须）：", args.load_model, "是否训练：", args.learn)
     runner = Runner(env, args)
-    
     if args.learn:
-        runner.run(args.alg)  
+        runner.run(args.alg)
     else:
         start_time = datetime.now()
-        win_rate, reward, time , move_time = runner.evaluate()
+        win_rate, reward, time, move_time = runner.evaluate()
         end_time = datetime.now()
         running_time = end_time - start_time
-        print('Evaluate win_rate: {}, reward: {}, makespan: {}, move_times: {}, running_time: {}'.format(win_rate, reward, time, move_time, running_time))
-    print("Exiting Main")
+        print('Evaluate win_rate: {}, reward: {}, makespan: {}, move_times: {}, running_time: {}'.format(
+            win_rate, reward, time, move_time, running_time))
+
 
 
 # 随机决策函数，用于测试环境
